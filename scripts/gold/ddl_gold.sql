@@ -96,3 +96,96 @@ LEFT JOIN gold.dim_products pr
 ON sd.sls_prd_key = pr.product_number
 LEFT JOIN gold.dim_customers cu
 ON sd.sls_cust_id = cu.customer_id;
+
+--------------------------------------------------
+--Customer report
+--------------------------------------------------
+/*
+purpose:
+	-This report consolidates key customer metrics and behaviours 
+highlights:
+	1.) gather essential fields such as name, age and transaction details.
+	2.) segment customers into categories (VIP, Regular, New) and age groups.
+	3.) Aggregatre customer-level metrics:
+		-total orders
+		-total sales
+		-total quantity purchased
+		-total products
+		-lifespan(in months)
+	4.) calculates valuable KPIs
+		-recency(months since last orders)
+		-average order value
+		-average monthly spend
+*/
+IF OBJECT_ID('gold.report_customers', 'V') IS NOT NULL
+	DROP VIEW gold.report_customers;
+
+GO
+CREATE VIEW gold.report_customers AS 
+WITH base_query AS( --CTE Base query
+SELECT 
+f.order_number,
+f.product_key,
+f.order_date,
+f.sales,
+f.quantity,
+c.customer_key,
+c.customer_number,
+CONCAT(c.first_name,' ',c.last_name) AS full_name,
+DATEDIFF(year,c.birthdate, GETDATE()) AS age
+FROM gold.fact_sales f
+LEFT JOIN gold.dim_customers c
+ON f.customer_key=c.customer_key
+WHERE order_date IS NOT NULL	
+), customer_agg AS(		--CTE AGG
+SELECT
+customer_key,
+customer_number,
+full_name,
+age,
+COUNT(DISTINCT order_number) AS tot_orders,
+SUM(sales) AS tot_sales,
+SUM(quantity) AS tot_quantity,
+COUNT(DISTINCT product_key) AS tot_products,
+MAX(order_date) AS last_order_date,
+MIN(order_date) AS first_order_date,
+DATEDIFF(MONTH, MIN(order_date),MAX(order_date)) AS lifespan
+FROM base_query
+GROUP BY 
+	customer_key,
+	customer_number,
+	full_name,
+	age
+)
+SELECT  --Final table
+	customer_key,
+	customer_number,
+	full_name,
+	age,
+	CASE 
+		 WHEN age<20 THEN 'Below 20'
+		 WHEN age BETWEEN 20 AND 29 THEN '20-29'
+		 WHEN age BETWEEN 30 AND 39 THEN '30-39'
+		 WHEN age BETWEEN 40 AND 49 THEN '40-49'
+		 ELSE 'Above 50'
+	END AS age_cat,
+	CASE 
+		 WHEN tot_sales>5000 AND lifespan>=12 THEN 'VIP'
+		 WHEN tot_sales<=5000 AND lifespan>=12 THEN 'Regular'
+		 ELSE 'New'
+	END AS spending_cat,
+	tot_orders,
+	tot_sales,
+	tot_quantity,
+	tot_products,
+	last_order_date,
+	DATEDIFF(MONTH,last_order_date,GETDATE()) AS recency,
+	first_order_date,
+	lifespan,
+	CASE WHEN tot_sales=0 THEN 0
+		 ELSE tot_sales/tot_orders
+		 END AS avg_order_value,
+	CASE WHEN lifespan =0 THEN	tot_sales
+		 ELSE tot_sales/lifespan
+	END AS avg_monthly_spend
+FROM customer_agg a
