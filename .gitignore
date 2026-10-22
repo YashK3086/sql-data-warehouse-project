@@ -18,3 +18,6 @@ Thumbs.db
 # Ignore IDE-specific files
 .vscode/
 .idea/
+
+# Ignore local extraction/backup directory
+sql-data-warehouse-project-main/
