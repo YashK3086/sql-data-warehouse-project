@@ -98,7 +98,7 @@ LEFT JOIN gold.dim_customers cu
 ON sd.sls_cust_id = cu.customer_id;
 
 --------------------------------------------------
---Customer report
+--Customer report -1 VIEW
 --------------------------------------------------
 /*
 purpose:
@@ -189,3 +189,95 @@ SELECT  --Final table
 		 ELSE tot_sales/lifespan
 	END AS avg_monthly_spend
 FROM customer_agg a
+
+--------------------------------------------------
+--Customer report -2 VIEW
+--------------------------------------------------
+/*
+Purpose:
+  - This report consolidates key product metrics and behaviors.
+
+Highlights:
+  1. Gathers essential fields such as product name, category, subcategory, and cost.
+  2. Segments products by revenue to identify High-Performers, Mid-Range, or Low-Performers.
+  3. Aggregates product-level metrics:
+     - total orders
+     - total sales
+     - total quantity sold
+     - total customers (unique)
+     - lifespan (in months)
+  4. Calculates valuable KPIs:
+     - recency (months since last sale)
+     - average order revenue (AOR)
+     - average monthly revenue
+===============================================================================
+*/
+IF OBJECT_ID('gold.report_products', 'V') IS NOT NULL
+	DROP VIEW gold.report_products;
+GO
+
+CREATE VIEW gold.report_products AS
+WITH base_query AS( --BASE QUERY
+SELECT 
+    f.order_number,
+    f.order_date,
+    f.customer_key,
+    f.sales,
+    f.quantity,
+    p.product_key,
+    p.product_name,
+    p.category_name,
+    p.subcategory_name,
+    p.product_cost
+FROM gold.fact_sales f
+LEFT JOIN gold.dim_products p
+ON f.product_key=p.product_key
+WHERE order_number IS NOT NULL
+), product_agg AS( --AGG QUERY
+SELECT
+    product_key,
+    product_name,
+    category_name,
+    subcategory_name,
+    product_cost,
+    DATEDIFF(MONTH,MIN(order_date),MAX(order_date)) AS lifespan,
+    MAX(order_date) AS last_sales_day,
+    COUNT(DISTINCT order_number) AS tot_orders,
+    COUNT(DISTINCT customer_key) AS tot_customers,
+    SUM(sales) AS tot_sales,
+    SUM(quantity) AS tot_quantity,
+    ROUND(AVG(CAST(sales AS FLOAT)/NULLIF(quantity,0)),2) AS avg_selling_price
+FROM base_query
+WHERE order_date IS NOT NULL
+GROUP BY   
+    product_key,
+    product_name,
+    category_name,
+    subcategory_name,
+    product_cost   
+)
+SELECT --FINAL QUERY
+    product_key,
+    product_name,
+    category_name,
+    subcategory_name,
+    product_cost,
+    last_sales_day,
+    DATEDIFF(MONTH, last_sales_day, GETDATE()) AS recency_in_months,
+    CASE WHEN tot_sales>50000 THEN 'High Performance'
+         WHEN tot_sales>=10000 THEN 'Mid-Range'
+         ELSE 'Low Performance' 
+    END AS  product_segment,
+    lifespan,
+    tot_orders,
+    tot_sales,
+    tot_quantity,
+    tot_customers,
+    avg_selling_price,
+    CASE WHEN tot_orders = 0 THEN 0
+         ELSE tot_sales/tot_orders 
+    END AS avg_order_revenue,
+    CASE WHEN lifespan=0 THEN 0
+         ELSE tot_sales/lifespan
+    END AS avg_monthly_revenue
+FROM product_agg
